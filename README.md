@@ -1,4 +1,4 @@
-# Really bad Lua binding for libaudio
+# Really bad Lua binding for miniaudio
 
 Compile the library with `make lib` and then you should be able to use it as
 shown in `use.lua`. Currently seems to work with Lua v5.4 but not Lua v5.1. I'm
