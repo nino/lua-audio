@@ -1,3 +1,5 @@
+#include <lauxlib.h>
+#include <lua.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -11,6 +13,7 @@ size_t num_loaded_samples = 0;
 size_t samples_capacity = 0;
 ma_decoder *current_sample = NULL;
 ma_device *playback_device = NULL;
+ma_device_config *playback_device_config = NULL;
 
 #pragma mark ERRORS
 
@@ -21,7 +24,7 @@ void panic(const char *msg) {
 
 #pragma mark SAMPLE HANDLING
 
-void push_sample(ma_decoder sample) {
+void push_sample(const char *filepath) {
     num_loaded_samples += 1;
 
     if (loaded_samples == NULL) {
@@ -42,7 +45,11 @@ void push_sample(ma_decoder sample) {
         }
     }
 
-    loaded_samples[num_loaded_samples - 1] = sample;
+    ma_result result = ma_decoder_init_file(
+        filepath, NULL, &loaded_samples[num_loaded_samples - 1]);
+    if (result != MA_SUCCESS) {
+        panic("Couldn't add decoder");
+    }
 }
 
 void free_device() {
@@ -89,7 +96,9 @@ ma_decoder decoder_with_file(const char *filepath) {
 
 void play_device(ma_device *device, ma_decoder *decoder) {
     ma_decoder_seek_to_pcm_frame(decoder, 0);
+    puts("Seeked to the beginning");
     current_sample = decoder;
+    puts("Set the correct sample");
     if (ma_device_start(device) != MA_SUCCESS) {
         printf("Failede to start playback device\n");
         ma_device_uninit(device);
@@ -101,8 +110,8 @@ void play_device(ma_device *device, ma_decoder *decoder) {
 void try_playing_wav_file() {
     ma_device_config device_config;
 
-    push_sample(decoder_with_file("assets/hihat.wav"));
-    push_sample(decoder_with_file("assets/hihat2.wav"));
+    push_sample("assets/hihat.wav");
+    push_sample("assets/hihat2.wav");
 
     device_config = ma_device_config_init(ma_device_type_playback);
     device_config.playback.format = loaded_samples[0].outputFormat;
@@ -140,8 +149,80 @@ void try_playing_wav_file() {
     free_all();
 }
 
-int main() {
-    printf("This is my audio test\n");
-    try_playing_wav_file();
+#pragma mark LUA
+
+enum LUA_TYPE {
+    LUA_NIL = 0,
+    LUA_STRING = 4,
+};
+
+static int l_lib_info(lua_State *L) {
+    lua_pushstring(L, "It's working.");
+    return 1;
+}
+
+static int l_initialize(lua_State *L) {
+    // Initialize samples
+    int index = 1;
+    int next_type;
+    while (true) {
+        next_type = lua_geti(L, 1, index);
+        if (next_type == LUA_NIL) {
+            break;
+        }
+        const char *value = lua_tostring(L, -1);
+        push_sample(value);
+
+        lua_remove(L, -1);
+        index += 1;
+    }
+
+    // Initialize device
+    playback_device_config =
+        (ma_device_config *)malloc(sizeof(ma_device_config));
+    *playback_device_config = ma_device_config_init(ma_device_type_playback);
+    playback_device_config->playback.format = loaded_samples[0].outputFormat;
+    playback_device_config->playback.channels =
+        loaded_samples[0].outputChannels;
+    playback_device_config->sampleRate = loaded_samples[0].outputSampleRate;
+    playback_device_config->dataCallback = data_callback;
+
+    playback_device = (ma_device *)malloc(sizeof(ma_device));
+    if (playback_device == NULL) {
+        free_samples();
+        panic("Couldn't allocate playback device");
+    }
+
+    if (ma_device_init(NULL, playback_device_config, playback_device) !=
+        MA_SUCCESS) {
+        free_samples();
+        free(playback_device);
+        panic("Failed to open playback device");
+    }
+
     return 0;
 }
+
+static int l_play(lua_State *L) {
+    int index = lua_tointeger(L, 1) - 1; // Subtract 1 because Lua is 1-indexed
+    play_device(playback_device, &loaded_samples[index]);
+    return 0;
+}
+
+static const struct luaL_Reg libaudio[] = {
+    {"info", l_lib_info},
+    {"initialize", l_initialize},
+    {"play", l_play},
+    {NULL, NULL} /* sentinel */
+};
+
+int luaopen_libaudio(lua_State *L) {
+    luaL_newlib(L, libaudio);
+    return 1;
+}
+
+/* int main() { */
+/*     printf("This is my audio test\n"); */
+/*     try_playing_wav_file(); */
+/*     return 0; */
+/* } */

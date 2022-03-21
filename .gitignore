@@ -1,3 +1,7 @@
 tags
 playback
 audio
+.cache
+compile_commands.json
+*.so
+zig-cache
