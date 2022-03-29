@@ -5,3 +5,5 @@ audio
 compile_commands.json
 *.so
 zig-cache
+.ninja_log
+build.ninja
